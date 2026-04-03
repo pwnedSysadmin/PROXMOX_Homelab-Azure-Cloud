@@ -1,3 +1,4 @@
+
 # 🖥️ Proxmox Homelab
 
 Documentation of my virtualization lab built on Proxmox VE, designed to practice system administration, networking, and security.
@@ -23,7 +24,7 @@ Documentation of my virtualization lab built on Proxmox VE, designed to practice
 |---|---|---|
 | Proxmox VE | 9.1.1 | Main hypervisor |
 | Debian | Trixie (13) | Proxmox underlying OS |
-| OPNsense | Latest | Virtual firewall/router (pfSense alternative) |
+| OPNsense | 26.1.2 | Virtual firewall/router (pfSense alternative) |
 
 ---
 
@@ -33,17 +34,17 @@ Documentation of my virtualization lab built on Proxmox VE, designed to practice
 Internet
     │
     ▼
-[OPNsense VM] ── Central Firewall/Router
+[OPNsense VM] ── Central Firewall/Router (192.168.1.38 WAN)
     │
-    ├── vmbr10 ── VLAN 10 · DMZ
+    ├── vmbr10 ── VLAN 10 · DMZ          (10.10.10.0/24)
     │               └── Web Server (HTTP/HTTPS)
     │
-    ├── vmbr20 ── VLAN 20 · Corporate Network
+    ├── vmbr20 ── VLAN 20 · Corporate    (10.20.20.0/24)
     │               ├── Windows Server (Active Directory + DNS)
     │               ├── Linux Server (File Server + DNS)
     │               └── Windows Client
     │
-    └── vmbr30 ── VLAN 30 · Security Lab
+    └── vmbr30 ── VLAN 30 · Security Lab (10.30.30.0/24)
                     ├── Kali Linux
                     └── Vulnerable Machine
 ```
@@ -52,8 +53,8 @@ Internet
 
 OPNsense acts as the **inter-VLAN router/firewall**: it is the only VM with interfaces on all network segments. Traffic between VLANs can only flow if OPNsense rules explicitly allow it, which ensures:
 
-- Kali (VLAN 30) cannot directly attack the Active Directory (VLAN 20)
-- The Web Server (VLAN 10) is exposed to the internet but isolated from internal networks
+- Kali (VLAN 30) cannot directly attack the Active Directory (VLAN 20) unless the pentesting rule is explicitly enabled
+- The Web Server (VLAN 10) is exposed but isolated from internal networks
 - All internet-bound traffic passes through and is filtered by OPNsense
 
 ---
@@ -69,12 +70,61 @@ OPNsense acts as the **inter-VLAN router/firewall**: it is the only VM with inte
 
 ---
 
+## OPNsense Network Interfaces
+
+| Interface | Maps to | IP | Role |
+|---|---|---|---|
+| vtnet0 | vmbr0 | 192.168.1.38/24 (DHCP) | WAN |
+| vtnet1 | vmbr10 | 10.10.10.1/24 | LAN (DMZ) |
+| vtnet2 | vmbr20 | 10.20.20.1/24 | OPT1 (Corporate) |
+| vtnet3 | vmbr30 | 10.30.30.1/24 | OPT2 (Security Lab) |
+
+### DHCP Ranges
+
+| Network | Range |
+|---|---|
+| DMZ (10.10.10.0/24) | 10.10.10.100 – 10.10.10.200 |
+| Corporate (10.20.20.0/24) | 10.20.20.100 – 10.20.20.200 |
+| Security Lab (10.30.30.0/24) | 10.30.30.100 – 10.30.30.200 |
+
+---
+
+## Firewall Rules
+
+### OPT1 — Corporate (VLAN 20)
+
+| Action | Source | Destination | Description |
+|---|---|---|---|
+| Pass | OPT1 net | LAN net | Corporate to DMZ |
+| Pass | OPT1 net | any | Corporate to internet |
+
+### OPT2 — Security Lab (VLAN 30)
+
+| Action | Source | Destination | Description |
+|---|---|---|---|
+| Pass | OPT2 net | any | Security Lab to internet (includes DMZ) |
+| Pass *(disabled)* | OPT2 net | OPT1 net | **PENTESTING ONLY** — Kali to Corporate. Enable only during controlled exercises |
+
+### WAN
+
+| Action | Source | Destination | Port | Description |
+|---|---|---|---|---|
+| Pass | 192.168.1.0/24 | WAN address | 443 | Allow UI access from management network |
+
+> **Note:** Block private networks and Block bogon networks are disabled on the WAN interface because the management network (192.168.1.0/24) shares the same segment as the WAN in this lab setup.
+
+---
+
 ## Build Phases
 
 - [x] **Phase 1** — Proxmox VE 9.1.1 installation
 - [x] **Phase 2** — Repository configuration (no-subscription)
 - [x] **Phase 3** — Virtual network bridges created (vmbr0, vmbr10, vmbr20, vmbr30)
-- [ ] **Phase 4** — OPNsense installation and configuration
+- [x] **Phase 4** — OPNsense installation and configuration
+  - [x] Interface assignment (WAN/LAN/OPT1/OPT2)
+  - [x] IP addressing per VLAN
+  - [x] DHCP server per VLAN
+  - [x] Firewall rules (inter-VLAN + internet access)
 - [ ] **Phase 5** — VLAN 20: Windows Server + Active Directory + domain-joined client
 - [ ] **Phase 6** — VLAN 10: Web Server in DMZ
 - [ ] **Phase 7** — VLAN 30: Kali Linux + vulnerable machine
@@ -98,7 +148,7 @@ OPNsense acts as the **inter-VLAN router/firewall**: it is the only VM with inte
 
 ## Installation Notes
 
-### Post-install repository fix
+### Proxmox — Post-install repository fix
 
 Proxmox VE 9 ships with enterprise repositories enabled by default (requires a paid subscription). For a no-cost lab environment, these must be disabled:
 
@@ -116,6 +166,13 @@ apt update && apt dist-upgrade -y
 ```
 
 > **Note:** In PVE 9, repos use the `.sources` format in addition to the classic `.list` format. Simply commenting out lines inside `.sources` files causes a `Malformed entry` error — emptying the files entirely is the correct approach.
+
+### OPNsense — WAN management access
+
+By default OPNsense blocks access to the web UI from the WAN interface. In this lab the management network shares the same segment as the WAN (`192.168.1.0/24`), so two changes are required:
+
+1. **Disable "Block private networks"** and **"Block bogon networks"** on the WAN interface (`Interfaces → WAN`)
+2. **Create a firewall rule** on WAN allowing TCP from `192.168.1.0/24` to WAN address port 443
 
 ---
 
