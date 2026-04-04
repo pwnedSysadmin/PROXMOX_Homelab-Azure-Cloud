@@ -24,7 +24,8 @@ Documentation of my virtualization lab built on Proxmox VE, designed to practice
 |---|---|---|
 | Proxmox VE | 9.1.1 | Main hypervisor |
 | Debian | Trixie (13) | Proxmox underlying OS |
-| OPNsense | 26.1.2 | Virtual firewall/router (pfSense alternative) |
+| OPNsense | 26.1.2 | Virtual firewall/router |
+| Windows Server 2022 | Standard Evaluation | Domain Controller (DC01) |
 
 ---
 
@@ -40,9 +41,9 @@ Internet
     │               └── Web Server (HTTP/HTTPS)
     │
     ├── vmbr20 ── VLAN 20 · Corporate    (10.20.20.0/24)
-    │               ├── Windows Server (Active Directory + DNS)
+    │               ├── DC01 - Windows Server 2022 (AD + DNS) → 10.20.20.10
     │               ├── Linux Server (File Server + DNS)
-    │               └── Windows Client
+    │               └── Windows Client (domain-joined)
     │
     └── vmbr30 ── VLAN 30 · Security Lab (10.30.30.0/24)
                     ├── Kali Linux
@@ -115,6 +116,52 @@ OPNsense acts as the **inter-VLAN router/firewall**: it is the only VM with inte
 
 ---
 
+## Active Directory — DC01
+
+### Domain info
+
+| Parameter | Value |
+|---|---|
+| Domain | `mandanga.local` |
+| Forest Functional Level | Windows Server 2022 |
+| Domain Controller | DC01 |
+| DC IP | 10.20.20.10 (static) |
+| DNS | DC01 (127.0.0.1 self) |
+
+### DC01 VM specs
+
+| Parameter | Value |
+|---|---|
+| RAM | 4 GB |
+| CPU | 2 cores |
+| Disk | 60 GB |
+| Network | vmbr20 (VLAN 20 Corporate) |
+| OS | Windows Server 2022 Standard Evaluation (Desktop Experience) |
+
+### OU Structure
+
+```
+mandanga.local
+├── Workstations      ← domain-joined client machines
+├── Servers           ← member servers
+├── Users_LAB         ← lab user accounts
+└── Groups_LAB        ← lab security groups
+```
+
+### Users
+
+| Username | Full name | OU | Groups |
+|---|---|---|---|
+| jgarcia | Juan Garcia | Users_LAB | IT_Admins |
+
+### Groups
+
+| Group | Type | Scope | Members |
+|---|---|---|---|
+| IT_Admins | Security | Global | jgarcia |
+
+---
+
 ## Build Phases
 
 - [x] **Phase 1** — Proxmox VE 9.1.1 installation
@@ -125,7 +172,14 @@ OPNsense acts as the **inter-VLAN router/firewall**: it is the only VM with inte
   - [x] IP addressing per VLAN
   - [x] DHCP server per VLAN
   - [x] Firewall rules (inter-VLAN + internet access)
-- [ ] **Phase 5** — VLAN 20: Windows Server + Active Directory + domain-joined client
+- [x] **Phase 5** — VLAN 20: Windows Server + Active Directory
+  - [x] Windows Server 2022 installation with VirtIO drivers
+  - [x] Static IP configuration (10.20.20.10)
+  - [x] AD DS + DNS roles installed
+  - [x] Promoted to Domain Controller (mandanga.local)
+  - [x] OU structure created
+  - [x] Test user and group created
+- [ ] **Phase 5b** — Domain-joined Windows 11 client
 - [ ] **Phase 6** — VLAN 10: Web Server in DMZ
 - [ ] **Phase 7** — VLAN 30: Kali Linux + vulnerable machine
 - [ ] **Phase 8** — Site-to-site VPN with Azure (optional)
@@ -134,15 +188,15 @@ OPNsense acts as the **inter-VLAN router/firewall**: it is the only VM with inte
 
 ## VM Resource Planning
 
-| VM | RAM | Disk | VLAN |
-|---|---|---|---|
-| OPNsense | 2 GB | 20 GB | WAN + all |
-| Windows Server (AD+DNS) | 4 GB | 60 GB | 20 |
-| Linux Server (File+DNS) | 2 GB | 40 GB | 20 |
-| Windows Client | 2 GB | 40 GB | 20 |
-| Web Server (Linux) | 1 GB | 20 GB | 10 |
-| Kali Linux | 2 GB | 30 GB | 30 |
-| **Total** | **13 GB / 32 GB** | **210 GB / 1 TB** | — |
+| VM | RAM | Disk | VLAN | Status |
+|---|---|---|---|---|
+| OPNsense | 2 GB | 20 GB | WAN + all | ✅ Running |
+| DC01 - Windows Server (AD+DNS) | 4 GB | 60 GB | 20 | ✅ Running |
+| Windows 11 Client | 2 GB | 40 GB | 20 | ⏳ Pending |
+| Linux Server (File+DNS) | 2 GB | 40 GB | 20 | ⏳ Pending |
+| Web Server (Linux) | 1 GB | 20 GB | 10 | ⏳ Pending |
+| Kali Linux | 2 GB | 30 GB | 30 | ⏳ Pending |
+| **Total** | **13 GB / 32 GB** | **210 GB / 1 TB** | — | — |
 
 ---
 
@@ -173,6 +227,19 @@ By default OPNsense blocks access to the web UI from the WAN interface. In this 
 
 1. **Disable "Block private networks"** and **"Block bogon networks"** on the WAN interface (`Interfaces → WAN`)
 2. **Create a firewall rule** on WAN allowing TCP from `192.168.1.0/24` to WAN address port 443
+
+### Windows Server — VirtIO drivers
+
+Windows does not include VirtIO drivers by default. Without them, the installer cannot detect the virtual disk. During installation click **Load driver** and browse to the VirtIO ISO:
+
+- Disk driver: `viostor → 2k22 → amd64`
+- Network driver: `NetKVM → 2k22 → amd64`
+- Memory balloon: `Balloon → 2k22 → amd64`
+
+VirtIO ISO download:
+```
+https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/stable-virtio/virtio-win.iso
+```
 
 ---
 
