@@ -148,18 +148,6 @@ mandanga.local
 └── Groups_LAB        ← lab security groups
 ```
 
-### Users
-
-| Username | Full name | OU | Groups |
-|---|---|---|---|
-| jgarcia | Juan Garcia | Users_LAB | IT_Admins |
-
-### Groups
-
-| Group | Type | Scope | Members |
-|---|---|---|---|
-| IT_Admins | Security | Global | jgarcia |
-
 ---
 
 ## Build Phases
@@ -185,18 +173,6 @@ mandanga.local
 - [ ] **Phase 8** — Site-to-site VPN with Azure (optional)
 
 ---
-
-## VM Resource Planning
-
-| VM | RAM | Disk | VLAN | Status |
-|---|---|---|---|---|
-| OPNsense | 2 GB | 20 GB | WAN + all | ✅ Running |
-| DC01 - Windows Server (AD+DNS) | 4 GB | 60 GB | 20 | ✅ Running |
-| Windows 11 Client | 2 GB | 40 GB | 20 | ⏳ Pending |
-| Linux Server (File+DNS) | 2 GB | 40 GB | 20 | ⏳ Pending |
-| Web Server (Linux) | 1 GB | 20 GB | 10 | ⏳ Pending |
-| Kali Linux | 2 GB | 30 GB | 30 | ⏳ Pending |
-| **Total** | **13 GB / 32 GB** | **210 GB / 1 TB** | — | — |
 
 ---
 
