@@ -26,6 +26,7 @@ Documentation of my virtualization lab built on Proxmox VE, designed to practice
 | Debian | Trixie (13) | Proxmox underlying OS |
 | OPNsense | 26.1.2 | Virtual firewall/router |
 | Windows Server 2022 | Standard Evaluation | Domain Controller (DC01) |
+| Windows 10 Pro | 22H2 | Domain client (PC-jgarcia) |
 
 ---
 
@@ -38,16 +39,16 @@ Internet
 [OPNsense VM] ── Central Firewall/Router (192.168.1.38 WAN)
     │
     ├── vmbr10 ── VLAN 10 · DMZ          (10.10.10.0/24)
-    │               └── Web Server (HTTP/HTTPS)
+    │               └── Web Server (HTTP/HTTPS)        ← PENDING
     │
     ├── vmbr20 ── VLAN 20 · Corporate    (10.20.20.0/24)
     │               ├── DC01 - Windows Server 2022 (AD + DNS) → 10.20.20.10
-    │               ├── Linux Server (File Server + DNS)
-    │               └── Windows Client (domain-joined)
+    │               ├── PC-jgarcia - Windows 10 Pro → 10.20.20.21
+    │               └── Linux Server (File Server)     ← PENDING
     │
     └── vmbr30 ── VLAN 30 · Security Lab (10.30.30.0/24)
-                    ├── Kali Linux
-                    └── Vulnerable Machine
+                    ├── Kali Linux                     ← PENDING
+                    └── Vulnerable Machine             ← PENDING
 ```
 
 ### Why this architecture?
@@ -166,13 +167,28 @@ mandanga.local
   - [x] AD DS + DNS roles installed
   - [x] Promoted to Domain Controller (mandanga.local)
   - [x] OU structure created
-  - [x] Test user and group created
-- [ ] **Phase 5b** — Domain-joined Windows 11 client
+  - [x] Test user (jgarcia) and group (IT_Admins) created
+  - [x] Windows 10 Pro client (PC-jgarcia) joined to domain
 - [ ] **Phase 6** — VLAN 10: Web Server in DMZ
 - [ ] **Phase 7** — VLAN 30: Kali Linux + vulnerable machine
-- [ ] **Phase 8** — Site-to-site VPN with Azure (optional)
+- [ ] **Phase 8** — Linux File Server (VLAN 20)
+- [ ] **Phase 9** — Docker / Kubernetes node
+- [ ] **Phase 10** — Site-to-site VPN with Azure + Azure AD Connect
 
 ---
+
+## VM Resource Planning
+
+| VM | RAM | Disk | VLAN | Status |
+|---|---|---|---|---|
+| OPNsense | 2 GB | 20 GB | WAN + all | ✅ Running |
+| DC01 - Windows Server (AD+DNS) | 4 GB | 60 GB | 20 | ✅ Running |
+| PC-jgarcia - Windows 10 Pro | 4 GB | 64 GB | 20 | ✅ Domain joined |
+| Web Server (Linux) | 1 GB | 20 GB | 10 | ⏳ Pending |
+| Linux Server (File+DNS) | 2 GB | 40 GB | 20 | ⏳ Pending |
+| Kali Linux | 2 GB | 30 GB | 30 | ⏳ Pending |
+| Vulnerable Machine | 1 GB | 20 GB | 30 | ⏳ Pending |
+| **Total used** | **10 GB / 32 GB** | **164 GB / 1 TB** | — | — |
 
 ---
 
@@ -206,15 +222,42 @@ By default OPNsense blocks access to the web UI from the WAN interface. In this 
 
 ### Windows Server — VirtIO drivers
 
-Windows does not include VirtIO drivers by default. Without them, the installer cannot detect the virtual disk. During installation click **Load driver** and browse to the VirtIO ISO:
+Windows does not include VirtIO drivers by default. Without them, the installer cannot detect the virtual disk or network adapter. During installation click **Load driver** and browse to the VirtIO ISO:
 
 - Disk driver: `viostor → 2k22 → amd64`
 - Network driver: `NetKVM → 2k22 → amd64`
 - Memory balloon: `Balloon → 2k22 → amd64`
 
+Same process for Windows 10 client, using `w10` folder instead of `2k22`.
+
 VirtIO ISO download:
 ```
 https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/stable-virtio/virtio-win.iso
+```
+
+### Windows 10 — Bypassing internet requirement during OOBE
+
+Windows 10/11 setup may require an internet connection during OOBE. To bypass:
+
+```cmd
+# Open CMD with Shift+F10 during setup, then run:
+taskkill /F /IM oobenetworkconnectionflow.exe
+```
+
+### Extending C: drive after Proxmox disk resize
+
+After resizing the disk in Proxmox, recovery partitions may block direct extension of C:. Remove them first:
+
+```cmd
+diskpart
+select disk 0
+select partition 4
+delete partition override
+select partition 5
+delete partition override
+select partition 3
+extend
+exit
 ```
 
 ---
