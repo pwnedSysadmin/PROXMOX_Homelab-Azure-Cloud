@@ -140,8 +140,17 @@ OPNsense acts as the **inter-VLAN router/firewall**: it is the only VM with inte
 | Action | Source | Destination | Port | Description |
 |---|---|---|---|---|
 | Pass | 192.168.1.0/24 | WAN address | 443 | Allow UI access from management network |
+| Pass | any | WAN address | 80 | HTTP to WEBSERVER-DMZ |
+| Pass | 192.168.1.0/24 | WAN address | 2210 | SSH to WEBSERVER-DMZ (port forward) |
 
-> **Note:** Block private networks and Block bogon networks are disabled on the WAN interface because the management network (192.168.1.0/24) shares the same segment as the WAN in this lab setup.
+### NAT — Destination NAT (Port Forwarding)
+
+| Interface | Destination port | Redirect to | Description |
+|---|---|---|---|
+| WAN | 2210 | 10.10.10.10:22 | SSH to WEBSERVER-DMZ |
+| WAN | 80 | 10.10.10.10:80 | HTTP to WEBSERVER-DMZ |
+
+> **Known issue:** OPNsense NAT port forward for port 80 is configured but external access is not working yet. Internal reverse proxy (Nginx → Flask) is fully functional. To revisit in a future session.
 
 ---
 
@@ -177,6 +186,35 @@ mandanga.local
 └── Groups_LAB        ← lab security groups
 ```
 
+### Users
+
+| Username | Full name | OU | Groups |
+|---|---|---|---|
+| jgarcia | Juan Garcia | Users_LAB | IT_Admins |
+
+### Groups
+
+| Group | Type | Scope | Members |
+|---|---|---|---|
+| IT_Admins | Security | Global | jgarcia |
+
+---
+
+## Client — PC-jgarcia
+
+| Parameter | Value |
+|---|---|
+| OS | Windows 10 Pro |
+| Hostname | PC-jgarcia |
+| IP | 10.20.20.21 (static) |
+| DNS | 10.20.20.10 (DC01) |
+| Domain | mandanga.local ✅ |
+| RAM | 4 GB |
+| Disk | 64 GB |
+| Network | vmbr20 (VLAN 20 Corporate) |
+
+> **Note:** Windows 11 upgrade attempted but blocked due to Windows 10 not being activated. Will revisit in a future phase.
+
 ---
 
 ## Web Stack — Phase 6
@@ -191,6 +229,7 @@ mandanga.local
 | Network | vmbr10 (DMZ) |
 | OS | Ubuntu Server 24.04 LTS |
 | Role | Nginx reverse proxy — forwards traffic to APPSERVER-CORP |
+| SSH access | `ssh admin@192.168.1.38 -p 2210` (via OPNsense port forward) |
 
 ### APPSERVER-CORP (Flask + PostgreSQL)
 
@@ -207,33 +246,36 @@ mandanga.local
 
 | Component | Purpose |
 |---|---|
-| **Nginx** | Reverse proxy — receives external requests, forwards to Flask |
-| **Flask** | Python web framework — handles API logic |
-| **SQLAlchemy** | ORM — Python interface to PostgreSQL |
-| **psycopg2** | PostgreSQL driver for Python |
-| **PostgreSQL** | Relational database |
+| Nginx | Reverse proxy — receives external requests, forwards to Flask |
+| Flask | Python web framework — handles API logic |
+| SQLAlchemy | ORM — Python interface to PostgreSQL |
+| psycopg2 | PostgreSQL driver for Python |
+| PostgreSQL | Relational database |
 
 ### API Endpoints
 
 | Method | Endpoint | Description |
 |---|---|---|
-| GET | `/api/usuarios` | Returns all users as JSON |
-| POST | `/api/usuarios` | Creates a new user |
+| GET | /api/usuarios | Returns all users as JSON |
+| POST | /api/usuarios | Creates a new user |
 
-### PostgreSQL setup
+### Nginx reverse proxy config — `/etc/nginx/sites-available/default`
 
-```bash
-sudo -i -u postgres psql
+```nginx
+server {
+    listen 80;
+    server_name _;
 
-CREATE DATABASE appdb;
-CREATE USER flaskuser WITH PASSWORD 'flask1234';
-GRANT ALL PRIVILEGES ON DATABASE appdb TO flaskuser;
-\c appdb
-GRANT ALL ON SCHEMA public TO flaskuser;
-\q
+    location / {
+        proxy_pass http://10.20.20.20:5000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+}
 ```
 
-### Flask app — app.py
+### Flask app — `app.py`
 
 ```python
 from flask import Flask, jsonify, request
@@ -268,30 +310,6 @@ if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
 ```
 
-### Flask systemd service — /etc/systemd/system/flask-app.service
-
-```ini
-[Unit]
-Description=Flask App
-After=network.target postgresql.service
-
-[Service]
-User=root
-WorkingDirectory=/home/admin-app
-Environment="PATH=/home/admin-app/venv/bin"
-ExecStart=/home/admin-app/venv/bin/python3 /home/admin-app/app.py
-Restart=always
-
-[Install]
-WantedBy=multi-user.target
-```
-
-```bash
-systemctl daemon-reload
-systemctl enable flask-app
-systemctl start flask-app
-```
-
 ---
 
 ## Build Phases
@@ -312,14 +330,16 @@ systemctl start flask-app
   - [x] OU structure created
   - [x] Test user (jgarcia) and group (IT_Admins) created
   - [x] Windows 10 Pro client (PC-jgarcia) joined to domain
-- [ ] **Phase 6** — VLAN 10: Web Server in DMZ + App Server in Corporate
+- [x] **Phase 6** — VLAN 10: Web Server in DMZ + App Server in Corporate
   - [x] WEBSERVER-DMZ (Ubuntu + Nginx) installed — 10.10.10.10
   - [x] APPSERVER-CORP (Ubuntu + Flask + PostgreSQL) installed — 10.20.20.20
   - [x] PostgreSQL database and user created
   - [x] Flask API running as systemd service
   - [x] API tested — GET and POST endpoints working
-  - [ ] Nginx configured as reverse proxy to Flask
-  - [ ] OPNsense rule: DMZ → Corporate port 5000
+  - [x] Nginx configured as reverse proxy to Flask
+  - [x] OPNsense rule: DMZ → Corporate port 5000
+  - [x] SSH access via OPNsense port forward (port 2210)
+  - [ ] External HTTP access via port forward ← pending fix
 - [ ] **Phase 7** — VLAN 30: Kali Linux + vulnerable machine
 - [ ] **Phase 8** — Linux File Server (VLAN 20)
 - [ ] **Phase 9** — Docker / Kubernetes node
@@ -346,57 +366,38 @@ systemctl start flask-app
 
 ### Proxmox — Post-install repository fix
 
-Proxmox VE 9 ships with enterprise repositories enabled by default (requires a paid subscription). For a no-cost lab environment, these must be disabled:
-
 ```bash
-# Disable enterprise repos (PVE 9 uses .sources format in addition to .list)
 echo "" > /etc/apt/sources.list.d/pve-enterprise.sources
 echo "" > /etc/apt/sources.list.d/ceph.sources
-
-# Add free no-subscription repo (trixie = Debian 13 = PVE 9)
 echo "deb http://download.proxmox.com/debian/pve trixie pve-no-subscription" \
   > /etc/apt/sources.list.d/pve-no-subscription.list
-
-# Update system
 apt update && apt dist-upgrade -y
 ```
 
-> **Note:** In PVE 9, repos use the `.sources` format in addition to the classic `.list` format. Simply commenting out lines inside `.sources` files causes a `Malformed entry` error — emptying the files entirely is the correct approach.
+> In PVE 9, repos use the `.sources` format. Emptying them (not commenting) is required to avoid `Malformed entry` errors.
 
 ### OPNsense — WAN management access
 
-By default OPNsense blocks access to the web UI from the WAN interface. In this lab the management network shares the same segment as the WAN (`192.168.1.0/24`), so two changes are required:
-
-1. **Disable "Block private networks"** and **"Block bogon networks"** on the WAN interface (`Interfaces → WAN`)
-2. **Create a firewall rule** on WAN allowing TCP from `192.168.1.0/24` to WAN address port 443
+1. Disable **Block private networks** and **Block bogon networks** on WAN interface
+2. Create firewall rule: Pass TCP from `192.168.1.0/24` to WAN address port 443
 
 ### Windows Server — VirtIO drivers
 
-Windows does not include VirtIO drivers by default. Without them, the installer cannot detect the virtual disk or network adapter. During installation click **Load driver** and browse to the VirtIO ISO:
+During installation click **Load driver** and browse to VirtIO ISO:
+- Disk: `viostor → 2k22 → amd64`
+- Network: `NetKVM → 2k22 → amd64`
+- Balloon: `Balloon → 2k22 → amd64`
 
-- Disk driver: `viostor → 2k22 → amd64`
-- Network driver: `NetKVM → 2k22 → amd64`
-- Memory balloon: `Balloon → 2k22 → amd64`
-
-Same process for Windows 10 client, using `w10` folder instead of `2k22`.
-
-VirtIO ISO download:
-```
-https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/stable-virtio/virtio-win.iso
-```
+VirtIO ISO: `https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/stable-virtio/virtio-win.iso`
 
 ### Windows 10 — Bypassing internet requirement during OOBE
 
-Windows 10/11 setup may require an internet connection during OOBE. To bypass:
-
 ```cmd
-# Open CMD with Shift+F10 during setup, then run:
+# Shift+F10 during setup
 taskkill /F /IM oobenetworkconnectionflow.exe
 ```
 
 ### Extending C: drive after Proxmox disk resize
-
-After resizing the disk in Proxmox, recovery partitions may block direct extension of C:. Remove them first:
 
 ```cmd
 diskpart
@@ -410,9 +411,7 @@ extend
 exit
 ```
 
-### Ubuntu Server — Python virtual environment setup
-
-Always use a virtual environment to isolate app dependencies:
+### Ubuntu Server — Python virtual environment
 
 ```bash
 python3 -m venv venv
@@ -420,15 +419,19 @@ source venv/bin/activate
 pip install flask psycopg2-binary flask-sqlalchemy
 ```
 
-### Testing the API from Windows (PowerShell)
+### Testing the API
 
-```powershell
-# GET — list all users
-Invoke-RestMethod -Uri "http://10.20.20.20:5000/api/usuarios" -Method GET
+```bash
+# From WEBSERVER-DMZ
+curl http://10.20.20.20:5000/api/usuarios
+curl http://10.10.10.10/api/usuarios
 
-# POST — create a user
-Invoke-RestMethod -Uri "http://10.20.20.20:5000/api/usuarios" `
-  -Method POST `
-  -ContentType "application/json" `
-  -Body '{"nombre":"Juan Garcia","email":"jgarcia@mandanga.local"}'
+# POST
+curl -X POST http://10.20.20.20:5000/api/usuarios \
+  -H "Content-Type: application/json" \
+  -d '{"nombre":"Juan Garcia","email":"jgarcia@mandanga.local"}'
 ```
+
+---
+
+*Documentation in progress — updated as the lab evolves.*
