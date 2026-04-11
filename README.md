@@ -198,22 +198,6 @@ mandanga.local
 |---|---|---|---|
 | IT_Admins | Security | Global | jgarcia |
 
----
-
-## Client — PC-jgarcia
-
-| Parameter | Value |
-|---|---|
-| OS | Windows 10 Pro |
-| Hostname | PC-jgarcia |
-| IP | 10.20.20.21 (static) |
-| DNS | 10.20.20.10 (DC01) |
-| Domain | mandanga.local ✅ |
-| RAM | 4 GB |
-| Disk | 64 GB |
-| Network | vmbr20 (VLAN 20 Corporate) |
-
-> **Note:** Windows 11 upgrade attempted but blocked due to Windows 10 not being activated. Will revisit in a future phase.
 
 ---
 
