@@ -25,8 +25,9 @@ Documentation of my virtualization lab built on Proxmox VE, designed to practice
 | Debian | Trixie (13) | Proxmox underlying OS |
 | OPNsense | 26.1.2 | Virtual firewall/router |
 | Windows Server 2022 | Standard Evaluation | Domain Controller (DC01) |
-| Windows 10 Pro | 22H2 | Domain client (PC-jgarcia) |
-| Ubuntu Server | 24.04 LTS | Web Server (DMZ) + App Server (Corporate) |
+| Windows 11 Pro | 24H2 | Domain client (PC-GARCIA) |
+| Ubuntu Server | 24.04 LTS | Web Server (DMZ) + App/File Server (Corporate) |
+| Kali Linux | 2025.1 | Security Lab (VLAN 30) |
 
 ---
 
@@ -43,38 +44,29 @@ Internet
     │
     ├── vmbr20 ── VLAN 20 · Corporate    (10.20.20.0/24)
     │               ├── DC01 - Windows Server 2022 (AD + DNS) → 10.20.20.10
-    │               ├── PC-jgarcia - Windows 10 Pro → 10.20.20.21
-    │               └── APPSERVER-CORP (Flask + PostgreSQL) → 10.20.20.20
+    │               ├── PC-GARCIA - Windows 11 Pro → 10.20.20.21
+    │               └── APPSERVER-CORP (Flask + PostgreSQL + Samba) → 10.20.20.20
     │
     └── vmbr30 ── VLAN 30 · Security Lab (10.30.30.0/24)
-                    ├── Kali Linux                     ← PENDING
-                    └── Vulnerable Machine             ← PENDING
+                    └── KALI - Kali Linux → 10.30.30.10
 ```
 
 ### Traffic flow — Web request end to end
 
 ```
 Client (internet or internal)
-    │
     │  GET /api/usuarios
     ▼
 Nginx DMZ (10.10.10.10)          ← only exposed point
-    │
     │  reverse proxy → 10.20.20.20:5000
     ▼
-Flask APPSERVER-CORP (10.20.20.20:5000)    ← never directly exposed
-    │
+Flask APPSERVER-CORP (10.20.20.20:5000)
     │  SELECT * FROM usuarios
     ▼
 PostgreSQL (localhost:5432)
-    │
-    ▼
-JSON response back to client
 ```
 
 ### Why this architecture?
-
-OPNsense acts as the **inter-VLAN router/firewall**: it is the only VM with interfaces on all network segments. Traffic between VLANs can only flow if OPNsense rules explicitly allow it, which ensures:
 
 - Kali (VLAN 30) cannot directly attack the Active Directory (VLAN 20) unless the pentesting rule is explicitly enabled
 - The Web Server (VLAN 10) is exposed but isolated from internal networks
@@ -127,7 +119,7 @@ OPNsense acts as the **inter-VLAN router/firewall**: it is the only VM with inte
 | Action | Source | Destination | Description |
 |---|---|---|---|
 | Pass | OPT2 net | any | Security Lab to internet (includes DMZ) |
-| Pass *(disabled)* | OPT2 net | OPT1 net | **PENTESTING ONLY** — Kali to Corporate. Enable only during controlled exercises |
+| Pass *(disabled)* | OPT2 net | OPT1 net | **PENTESTING ONLY** — enable only during controlled exercises |
 
 ### LAN — DMZ (VLAN 10)
 
@@ -141,16 +133,18 @@ OPNsense acts as the **inter-VLAN router/firewall**: it is the only VM with inte
 |---|---|---|---|---|
 | Pass | 192.168.1.0/24 | WAN address | 443 | Allow UI access from management network |
 | Pass | any | WAN address | 80 | HTTP to WEBSERVER-DMZ |
-| Pass | 192.168.1.0/24 | WAN address | 2210 | SSH to WEBSERVER-DMZ (port forward) |
+| Pass | 192.168.1.0/24 | WAN address | 2210 | SSH to WEBSERVER-DMZ |
+| Pass | 192.168.1.0/24 | WAN address | 2220 | SSH to APPSERVER-CORP |
 
 ### NAT — Destination NAT (Port Forwarding)
 
 | Interface | Destination port | Redirect to | Description |
 |---|---|---|---|
 | WAN | 2210 | 10.10.10.10:22 | SSH to WEBSERVER-DMZ |
+| WAN | 2220 | 10.20.20.20:22 | SSH to APPSERVER-CORP |
 | WAN | 80 | 10.10.10.10:80 | HTTP to WEBSERVER-DMZ |
 
-> **Known issue:** OPNsense NAT port forward for port 80 is configured but external access is not working yet. Internal reverse proxy (Nginx → Flask) is fully functional. To revisit in a future session.
+> **Known issue:** OPNsense NAT port forward for port 80 is configured but external HTTP access is not working yet. Internal reverse proxy (Nginx → Flask) is fully functional.
 
 ---
 
@@ -198,10 +192,31 @@ mandanga.local
 |---|---|---|---|
 | IT_Admins | Security | Global | jgarcia |
 
+### GPOs
+
+| GPO | Linked to | Description |
+|---|---|---|
+| Administracion Remota - Workstations | Workstations | Enables WinRM remote management rules on domain workstations |
+| Mapeo Unidad Red | Workstations | Maps network drive Z: to \\10.20.20.20\compartido on login ← PENDING |
 
 ---
 
-## Web Stack — Phase 6
+## Client — PC-GARCIA
+
+| Parameter | Value |
+|---|---|
+| OS | Windows 11 Pro |
+| Hostname | PC-GARCIA |
+| IP | 10.20.20.21 (static) |
+| DNS | 10.20.20.10 (DC01) |
+| Domain | mandanga.local ✅ |
+| RAM | 4 GB |
+| Disk | 100 GB |
+| Network | vmbr20 (VLAN 20 Corporate) |
+
+---
+
+## Web Stack — WEBSERVER-DMZ + APPSERVER-CORP
 
 ### WEBSERVER-DMZ (Nginx)
 
@@ -212,10 +227,10 @@ mandanga.local
 | Disk | 20 GB |
 | Network | vmbr10 (DMZ) |
 | OS | Ubuntu Server 24.04 LTS |
-| Role | Nginx reverse proxy — forwards traffic to APPSERVER-CORP |
-| SSH access | `ssh admin@192.168.1.38 -p 2210` (via OPNsense port forward) |
+| Role | Nginx reverse proxy |
+| SSH access | `ssh admin@192.168.1.38 -p 2210` |
 
-### APPSERVER-CORP (Flask + PostgreSQL)
+### APPSERVER-CORP (Flask + PostgreSQL + Samba)
 
 | Parameter | Value |
 |---|---|
@@ -224,17 +239,9 @@ mandanga.local
 | Disk | 20 GB |
 | Network | vmbr20 (Corporate) |
 | OS | Ubuntu Server 24.04 LTS |
-| Role | Flask API + PostgreSQL database |
-
-### Stack
-
-| Component | Purpose |
-|---|---|
-| Nginx | Reverse proxy — receives external requests, forwards to Flask |
-| Flask | Python web framework — handles API logic |
-| SQLAlchemy | ORM — Python interface to PostgreSQL |
-| psycopg2 | PostgreSQL driver for Python |
-| PostgreSQL | Relational database |
+| Role | Flask API + PostgreSQL + Samba File Server |
+| SSH access | `ssh admin-app@192.168.1.38 -p 2220` |
+| Domain | mandanga.local ✅ (joined via net ads join) |
 
 ### API Endpoints
 
@@ -243,56 +250,66 @@ mandanga.local
 | GET | /api/usuarios | Returns all users as JSON |
 | POST | /api/usuarios | Creates a new user |
 
-### Nginx reverse proxy config — `/etc/nginx/sites-available/default`
+### Samba File Server
 
-```nginx
-server {
-    listen 80;
-    server_name _;
+| Parameter | Value |
+|---|---|
+| Share | `\\10.20.20.20\compartido` |
+| Path | `/srv/samba/compartido` |
+| Access | Domain users (`usuarios del dominio`) |
 
-    location / {
-        proxy_pass http://10.20.20.20:5000;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    }
-}
+#### smb.conf
+
+```ini
+[global]
+    workgroup = MANDANGA
+    server string = File Server
+    security = ADS
+    realm = MANDANGA.LOCAL
+    winbind use default domain = yes
+    winbind enum users = yes
+    winbind enum groups = yes
+    idmap config * : backend = tdb
+    idmap config * : range = 3000-7999
+    idmap config MANDANGA : backend = rid
+    idmap config MANDANGA : range = 10000-19999
+
+[compartido]
+    path = /srv/samba/compartido
+    browseable = yes
+    writeable = yes
+    guest ok = no
+    valid users = @"usuarios del dominio"
 ```
 
-### Flask app — `app.py`
+> **Note:** Group name must match the AD language. In Spanish AD installations, use `@"usuarios del dominio"` — not `@"Domain Users"`. The domain prefix (`MANDANGA+`) is not needed since it's already defined in `[global]`.
 
-```python
-from flask import Flask, jsonify, request
-from flask_sqlalchemy import SQLAlchemy
+---
 
-app = Flask(__name__)
-app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://flaskuser:flask1234@localhost/appdb'
-db = SQLAlchemy(app)
+## Security Lab — Kali Linux
 
-class Usuario(db.Model):
-    __tablename__ = 'usuarios'
-    id = db.Column(db.Integer, primary_key=True)
-    nombre = db.Column(db.String(100), nullable=False)
-    email = db.Column(db.String(100), nullable=False)
+| Parameter | Value |
+|---|---|
+| IP | 10.30.30.10 (static) |
+| RAM | 2 GB |
+| Disk | 30 GB |
+| Network | vmbr30 (Security Lab) |
+| OS | Kali Linux 2025.1 |
 
-@app.route('/api/usuarios', methods=['GET'])
-def get_usuarios():
-    usuarios = Usuario.query.all()
-    return jsonify([{'id': u.id, 'nombre': u.nombre, 'email': u.email} for u in usuarios])
+### Attacks demonstrated
 
-@app.route('/api/usuarios', methods=['POST'])
-def create_usuario():
-    data = request.get_json()
-    nuevo = Usuario(nombre=data['nombre'], email=data['email'])
-    db.session.add(nuevo)
-    db.session.commit()
-    return jsonify({'mensaje': 'Usuario creado', 'id': nuevo.id}), 201
+| Technique | Tool | Target | Result |
+|---|---|---|---|
+| NTDS dump | NetExec (nxc) | DC01 (10.20.20.10) | All domain hashes extracted |
+| SMB enumeration | nxc smb | DC01 | Domain info, shares enumerated |
 
-if __name__ == '__main__':
-    with app.app_context():
-        db.create_all()
-    app.run(host='0.0.0.0', port=5000)
-```
+### Key findings
+
+- `krbtgt` hash extracted → Golden Ticket attack possible
+- All domain user hashes (NT) extracted via `nxc smb --ntds`
+- WinRM accessible on DC01 port 5985
+
+> **Note:** LLMNR/NBT-NS attacks (Responder) require being on the same network segment as the target — they do not cross VLANs. Kali is in VLAN 30, Corporate network is VLAN 20.
 
 ---
 
@@ -300,32 +317,23 @@ if __name__ == '__main__':
 
 - [x] **Phase 1** — Proxmox VE 9.1.1 installation
 - [x] **Phase 2** — Repository configuration (no-subscription)
-- [x] **Phase 3** — Virtual network bridges created (vmbr0, vmbr10, vmbr20, vmbr30)
+- [x] **Phase 3** — Virtual network bridges (vmbr0, vmbr10, vmbr20, vmbr30)
 - [x] **Phase 4** — OPNsense installation and configuration
-  - [x] Interface assignment (WAN/LAN/OPT1/OPT2)
-  - [x] IP addressing per VLAN
-  - [x] DHCP server per VLAN
-  - [x] Firewall rules (inter-VLAN + internet access)
 - [x] **Phase 5** — VLAN 20: Windows Server + Active Directory
-  - [x] Windows Server 2022 installation with VirtIO drivers
-  - [x] Static IP configuration (10.20.20.10)
-  - [x] AD DS + DNS roles installed
-  - [x] Promoted to Domain Controller (mandanga.local)
-  - [x] OU structure created
-  - [x] Test user (jgarcia) and group (IT_Admins) created
-  - [x] Windows 10 Pro client (PC-jgarcia) joined to domain
-- [x] **Phase 6** — VLAN 10: Web Server in DMZ + App Server in Corporate
-  - [x] WEBSERVER-DMZ (Ubuntu + Nginx) installed — 10.10.10.10
-  - [x] APPSERVER-CORP (Ubuntu + Flask + PostgreSQL) installed — 10.20.20.20
-  - [x] PostgreSQL database and user created
-  - [x] Flask API running as systemd service
-  - [x] API tested — GET and POST endpoints working
-  - [x] Nginx configured as reverse proxy to Flask
-  - [x] OPNsense rule: DMZ → Corporate port 5000
-  - [x] SSH access via OPNsense port forward (port 2210)
-  - [ ] External HTTP access via port forward ← pending fix
-- [ ] **Phase 7** — VLAN 30: Kali Linux + vulnerable machine
-- [ ] **Phase 8** — Linux File Server (VLAN 20)
+  - [x] DC01 promoted to Domain Controller (mandanga.local)
+  - [x] OU structure, users and groups created
+  - [x] Windows 11 Pro client (PC-GARCIA) joined to domain
+  - [x] GPO: Remote management enabled on workstations
+- [x] **Phase 6** — Web stack: Nginx (DMZ) + Flask + PostgreSQL (Corporate)
+  - [x] Reverse proxy Nginx → Flask working internally
+  - [ ] External HTTP access via OPNsense port forward ← pending fix
+- [x] **Phase 7** — VLAN 30: Kali Linux
+  - [x] Kali installed and operational
+  - [x] NTDS dump via NetExec demonstrated
+- [x] **Phase 8** — Samba File Server on APPSERVER-CORP
+  - [x] APPSERVER-CORP joined to mandanga.local domain
+  - [x] Samba share accessible by domain users
+  - [ ] GPO: Auto-map Z: drive on login ← pending
 - [ ] **Phase 9** — Docker / Kubernetes node
 - [ ] **Phase 10** — Site-to-site VPN with Azure + Azure AD Connect
 
@@ -337,12 +345,11 @@ if __name__ == '__main__':
 |---|---|---|---|---|
 | OPNsense | 2 GB | 20 GB | WAN + all | ✅ Running |
 | DC01 - Windows Server (AD+DNS) | 4 GB | 60 GB | 20 | ✅ Running |
-| PC-jgarcia - Windows 10 Pro | 4 GB | 64 GB | 20 | ✅ Domain joined |
+| PC-GARCIA - Windows 11 Pro | 4 GB | 100 GB | 20 | ✅ Domain joined |
 | WEBSERVER-DMZ (Nginx) | 1 GB | 20 GB | 10 | ✅ Running |
-| APPSERVER-CORP (Flask + PostgreSQL) | 1 GB | 20 GB | 20 | ✅ Running |
-| Kali Linux | 2 GB | 30 GB | 30 | ⏳ Pending |
-| Vulnerable Machine | 1 GB | 20 GB | 30 | ⏳ Pending |
-| **Total used** | **14 GB / 32 GB** | **234 GB / 1 TB** | — | — |
+| APPSERVER-CORP (Flask + PostgreSQL + Samba) | 1 GB | 20 GB | 20 | ✅ Running |
+| KALI | 2 GB | 30 GB | 30 | ✅ Running |
+| **Total used** | **14 GB / 32 GB** | **250 GB / 1 TB** | — | — |
 
 ---
 
@@ -358,8 +365,6 @@ echo "deb http://download.proxmox.com/debian/pve trixie pve-no-subscription" \
 apt update && apt dist-upgrade -y
 ```
 
-> In PVE 9, repos use the `.sources` format. Emptying them (not commenting) is required to avoid `Malformed entry` errors.
-
 ### OPNsense — WAN management access
 
 1. Disable **Block private networks** and **Block bogon networks** on WAN interface
@@ -367,53 +372,53 @@ apt update && apt dist-upgrade -y
 
 ### Windows Server — VirtIO drivers
 
-During installation click **Load driver** and browse to VirtIO ISO:
-- Disk: `viostor → 2k22 → amd64`
-- Network: `NetKVM → 2k22 → amd64`
-- Balloon: `Balloon → 2k22 → amd64`
+```
+Disk:    viostor → 2k22 → amd64
+Network: NetKVM  → 2k22 → amd64
+Balloon: Balloon → 2k22 → amd64
+```
 
-VirtIO ISO: `https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/stable-virtio/virtio-win.iso`
-
-### Windows 10 — Bypassing internet requirement during OOBE
+### Windows 11 — Bypassing internet requirement during OOBE
 
 ```cmd
-# Shift+F10 during setup
 taskkill /F /IM oobenetworkconnectionflow.exe
 ```
 
-### Extending C: drive after Proxmox disk resize
-
-```cmd
-diskpart
-select disk 0
-select partition 4
-delete partition override
-select partition 5
-delete partition override
-select partition 3
-extend
-exit
-```
-
-### Ubuntu Server — Python virtual environment
+### Samba — joining Linux to AD domain
 
 ```bash
-python3 -m venv venv
-source venv/bin/activate
-pip install flask psycopg2-binary flask-sqlalchemy
+# Install required packages
+sudo apt install samba winbind libnss-winbind libpam-winbind krb5-user -y
+
+# Join the domain
+sudo net ads join -U Administrador
+
+# Enable and start services
+sudo systemctl enable winbind smbd
+sudo systemctl restart winbind smbd
+
+# Verify domain join
+sudo net ads info
+sudo wbinfo -u
+sudo wbinfo -g
 ```
 
-### Testing the API
+> **Important:** Set DNS to DC IP (`10.20.20.10`) in `/etc/resolv.conf` before joining the domain. systemd-resolved (`127.0.0.53`) will prevent the join.
+
+### Testing Samba access
 
 ```bash
-# From WEBSERVER-DMZ
-curl http://10.20.20.20:5000/api/usuarios
-curl http://10.10.10.10/api/usuarios
+# From APPSERVER-CORP
+smbclient //localhost/compartido -U jgarcia%password
 
-# POST
-curl -X POST http://10.20.20.20:5000/api/usuarios \
-  -H "Content-Type: application/json" \
-  -d '{"nombre":"Juan Garcia","email":"jgarcia@mandanga.local"}'
+# From Windows client
+net use \\10.20.20.20\compartido /user:MANDANGA\jgarcia password
+```
+
+### NTDS dump with NetExec
+
+```bash
+nxc smb 10.20.20.10 -u 'Administrador' -p 'Password' --ntds
 ```
 
 ---
