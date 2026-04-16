@@ -296,23 +296,6 @@ mandanga.local
 | Network | vmbr30 (Security Lab) |
 | OS | Kali Linux 2025.1 |
 
-### Attacks demonstrated
-
-| Technique | Tool | Target | Result |
-|---|---|---|---|
-| NTDS dump | NetExec (nxc) | DC01 (10.20.20.10) | All domain hashes extracted |
-| SMB enumeration | nxc smb | DC01 | Domain info, shares enumerated |
-
-### Key findings
-
-- `krbtgt` hash extracted → Golden Ticket attack possible
-- All domain user hashes (NT) extracted via `nxc smb --ntds`
-- WinRM accessible on DC01 port 5985
-
-> **Note:** LLMNR/NBT-NS attacks (Responder) require being on the same network segment as the target — they do not cross VLANs. Kali is in VLAN 30, Corporate network is VLAN 20.
-
----
-
 ## Build Phases
 
 - [x] **Phase 1** — Proxmox VE 9.1.1 installation
